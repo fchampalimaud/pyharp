@@ -4,10 +4,11 @@ import threading
 from functools import partial
 from typing import Union
 
+from harp.protocol.exceptions import HarpException
+from harp.protocol.messages import MessageType, convert_from_message_bytes
+
 import serial
 import serial.threaded
-from harp.protocol.exceptions import HarpException
-from harp.protocol.messages import HarpMessage, MessageType
 
 
 class HarpSerialProtocol(serial.threaded.Protocol):
@@ -150,7 +151,7 @@ class HarpSerial:
             frame = self._read_q.get()
             try:
                 # Parses the bytearray into a ReplyHarpMessage object
-                msg = HarpMessage.parse(frame)
+                msg = convert_from_message_bytes(frame)
                 if msg.message_type == MessageType.EVENT:
                     self.event_q.put(msg)
                 else:
