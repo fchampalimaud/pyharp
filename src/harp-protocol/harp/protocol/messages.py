@@ -5,7 +5,6 @@ import struct
 from typing import Generic, Optional, TypeVar, Union
 
 from harp.protocol import MessageType, PayloadType
-from harp.protocol.exceptions import HarpException
 
 T = TypeVar("T")
 
@@ -61,6 +60,7 @@ class HarpMessage(Generic[T]):
         raw_timestamp = self._get_raw_timestamp(payload_type, timestamp)
         raw_payload = self._get_raw_payload(payload_type, payload)
 
+        self._frame = bytearray()
         self._frame.append(message_type)
         self._frame.append(self.BASE_LENGTH + len(raw_timestamp) + len(raw_payload))
         self._frame.append(address)
@@ -76,6 +76,8 @@ class HarpMessage(Generic[T]):
         timestamp: Optional[float],
     ) -> bytearray:
         if payload_type.has_timestamp() and timestamp is None:
+            from harp.protocol.exceptions import HarpException
+
             raise HarpException(
                 "The payload type provided indicates the message should have a timestamp, but a timestamp was not provided."
             )
@@ -85,7 +87,7 @@ class HarpMessage(Generic[T]):
         if timestamp is not None:
             seconds = int(math.floor(timestamp))
             raw_timestamp += seconds.to_bytes(length=4, byteorder="little")
-            microseconds = int((timestamp - seconds) / (32 + 10**-6))
+            microseconds = int((timestamp - seconds) / (32 * 10**-6))
             raw_timestamp += microseconds.to_bytes(length=2, byteorder="little")
 
         return raw_timestamp
@@ -98,17 +100,27 @@ class HarpMessage(Generic[T]):
     ) -> bytearray:
         if payload_type.is_float() and not (
             isinstance(payload, float)
-            or isinstance(payload, list[float])
+            or (
+                isinstance(payload, list)
+                and all(isinstance(item, float) for item in payload)
+            )
             or payload is None
         ):
+            from harp.protocol.exceptions import HarpException
+
             raise HarpException(
                 "The payload type provided indicates the payload should be a float or a list[float], but the payload provided is not."
             )
         elif not payload_type.is_float() and not (
             isinstance(payload, int)
-            or isinstance(payload, list[int])
+            or (
+                isinstance(payload, list)
+                and all(isinstance(item, int) for item in payload)
+            )
             or payload is None
         ):
+            from harp.protocol.exceptions import HarpException
+
             raise HarpException(
                 "The payload type provided indicates the payload should be an int or a list[int], but the payload provided is not."
             )
@@ -118,7 +130,7 @@ class HarpMessage(Generic[T]):
         if payload is not None:
             if isinstance(payload, int) or isinstance(payload, float):
                 values = [payload]
-            elif isinstance(payload, list[float | int]):
+            elif isinstance(payload, list):
                 values = payload
 
             for val in values:
@@ -226,7 +238,7 @@ class HarpMessage(Generic[T]):
                 int.from_bytes(self.frame[5:9], byteorder="little", signed=False)
                 + int.from_bytes(self.frame[9:11], byteorder="little", signed=False)
                 * 32e-6
-            )  # TODO: check if this returns a float
+            )
         return None
 
     @property
@@ -372,11 +384,15 @@ def _get_payload(
             ]
     else:
         if len(raw_payload) == type_size:
-            return int.from_bytes(raw_payload, byteorder="little", signed=True)
+            return int.from_bytes(
+                raw_payload, byteorder="little", signed=payload_type.is_signed()
+            )
         else:
             return [
                 int.from_bytes(
-                    raw_payload[i : i + type_size], byteorder="little", signed=True
+                    raw_payload[i : i + type_size],
+                    byteorder="little",
+                    signed=payload_type.is_signed(),
                 )
-                for i in range(len(raw_payload), type_size)
+                for i in range(0, len(raw_payload), type_size)
             ]
