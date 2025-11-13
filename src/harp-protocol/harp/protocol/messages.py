@@ -380,7 +380,7 @@ def _get_payload(
         else:
             return [
                 struct.unpack("<f", raw_payload[i : i + 4])[0]
-                for i in range(len(raw_payload), 4)
+                for i in range(0, len(raw_payload), 4)
             ]
     else:
         if len(raw_payload) == type_size:
