@@ -146,64 +146,6 @@ class PayloadType(IntEnum):
         return self & _PayloadTypeFlags.TYPE_SIZE
 
 
-class CommonRegisters(IntEnum):
-    """
-    An enumeration with the registers that are common to every Harp device. More information on the common registers can be found [here](https://harp-tech.org/protocol/Device.html#table---list-of-available-common-registers).
-
-    Attributes
-    ----------
-    WHO_AM_I : int
-        The number of the `WHO_AM_I` register
-    HW_VERSION_H : int
-        The number of the `HW_VERSION_H` register
-    HW_VERSION_L : int
-        The number of the `HW_VERSION_L` register
-    ASSEMBLY_VERSION : int
-        The number of the `ASSEMBLY_VERSION` register
-    CORE_VERSION_H : int
-        The number of the `CORE_VERSION_H` register
-    CORE_VERSION_L : int
-        The number of the `CORE_VERSION_L` register
-    FIRMWARE_VERSION_H : int
-        The number of the `FIRMWARE_VERSION_H` register
-    FIRMWARE_VERSION_L : int
-        The number of the `FIRMWARE_VERSION_L` register
-    TIMESTAMP_SECOND : int
-        The number of the `TIMESTAMP_SECOND` register
-    TIMESTAMP_MICRO : int
-        The number of the `TIMESTAMP_MICRO` register
-    OPERATION_CTRL : int
-        The number of the `OPERATION_CTRL` register
-    RESET_DEV : int
-        The number of the `RESET_DEV` register
-    DEVICE_NAME : int
-        The number of the `DEVICE_NAME` register
-    SERIAL_NUMBER : int
-        The number of the `SERIAL_NUMBER` register
-    CLOCK_CONFIG : int
-        The number of the `CLOCK_CONFIG` register
-    TIMESTAMP_OFFSET : int
-        The number of the `TIMESTAMP_OFFSET` register
-    """
-
-    WHO_AM_I = 0x00
-    HW_VERSION_H = 0x01
-    HW_VERSION_L = 0x02
-    ASSEMBLY_VERSION = 0x03
-    CORE_VERSION_H = 0x04
-    CORE_VERSION_L = 0x05
-    FIRMWARE_VERSION_H = 0x06
-    FIRMWARE_VERSION_L = 0x07
-    TIMESTAMP_SECOND = 0x08
-    TIMESTAMP_MICRO = 0x09
-    OPERATION_CTRL = 0x0A
-    RESET_DEV = 0x0B
-    DEVICE_NAME = 0x0C
-    SERIAL_NUMBER = 0x0D
-    CLOCK_CONFIG = 0x0E
-    TIMESTAMP_OFFSET = 0x0F
-
-
 class OperationMode(IntEnum):
     """
     An enumeration with the operation modes of a Harp device. More information on the operation modes can be found [here](https://harp-tech.org/protocol/Device.html#r_operation_ctrl-u16--operation-mode-configuration).

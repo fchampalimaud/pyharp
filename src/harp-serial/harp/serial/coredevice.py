@@ -10,7 +10,6 @@ from typing import Literal, Optional
 
 import serial
 from harp.protocol import (
-    CommonRegisters,
     MessageType,
     OperationCtrl,
     PayloadType,
@@ -475,23 +474,80 @@ class TimestampOffset(HarpMessage[int]):
         )
 
 
+class CommonRegisters(IntEnum):
+    """Enum for all available registers in the Common device.
+
+    Attributes
+    ----------
+    WHO_AM_I : int
+        Specifies the identity class of the device.
+    HARDWARE_VERSION_HIGH : int
+        Specifies the major hardware version of the device.
+    HARDWARE_VERSION_LOW : int
+        Specifies the minor hardware version of the device.
+    ASSEMBLY_VERSION : int
+        Specifies the version of the assembled components in the device.
+    CORE_VERSION_HIGH : int
+        Specifies the major version of the Harp core implemented by the device.
+    CORE_VERSION_LOW : int
+        Specifies the minor version of the Harp core implemented by the device.
+    FIRMWARE_VERSION_HIGH : int
+        Specifies the major version of the Harp core implemented by the device.
+    FIRMWARE_VERSION_LOW : int
+        Specifies the minor version of the Harp core implemented by the device.
+    TIMESTAMP_SECONDS : int
+        Stores the integral part of the system timestamp, in seconds.
+    TIMESTAMP_MICROSECONDS : int
+        Stores the fractional part of the system timestamp, in microseconds.
+    OPERATION_CONTROL : int
+        Stores the configuration mode of the device.
+    RESET_DEVICE : int
+        Resets the device and saves non-volatile registers.
+    DEVICE_NAME : int
+        Stores the user-specified device name.
+    SERIAL_NUMBER : int
+        Specifies the unique serial number of the device.
+    CLOCK_CONFIGURATION : int
+        Specifies the configuration for the device synchronization clock.
+    TIMESTAMP_OFFSET : int
+        Specifies an offset value to be added to the device's timestamp if above zero. The register is sensitive to 500 microsecond increments. This register is non-volatile.
+    """
+
+    WHO_AM_I = 0
+    HARDWARE_VERSION_HIGH = 1
+    HARDWARE_VERSION_LOW = 2
+    ASSEMBLY_VERSION = 3
+    CORE_VERSION_HIGH = 4
+    CORE_VERSION_LOW = 5
+    FIRMWARE_VERSION_HIGH = 6
+    FIRMWARE_VERSION_LOW = 7
+    TIMESTAMP_SECONDS = 8
+    TIMESTAMP_MICROSECONDS = 9
+    OPERATION_CONTROL = 10
+    RESET_DEVICE = 11
+    DEVICE_NAME = 12
+    SERIAL_NUMBER = 13
+    CLOCK_CONFIGURATION = 14
+    TIMESTAMP_OFFSET = 15
+
+
 COMMON_REGISTERS = {
-    0: WhoAmI,
-    1: HardwareVersionHigh,
-    2: HardwareVersionLow,
-    3: AssemblyVersion,
-    4: CoreVersionHigh,
-    5: CoreVersionLow,
-    6: FirmwareVersionHigh,
-    7: FirmwareVersionLow,
-    8: TimestampSeconds,
-    9: TimestampMicroseconds,
-    10: OperationControl,
-    11: ResetDevice,
-    12: DeviceName,
-    13: SerialNumber,
-    14: ClockConfiguration,
-    15: TimestampOffset,
+    CommonRegisters.WHO_AM_I: WhoAmI,
+    CommonRegisters.HARDWARE_VERSION_HIGH: HardwareVersionHigh,
+    CommonRegisters.HARDWARE_VERSION_LOW: HardwareVersionLow,
+    CommonRegisters.ASSEMBLY_VERSION: AssemblyVersion,
+    CommonRegisters.CORE_VERSION_HIGH: CoreVersionHigh,
+    CommonRegisters.CORE_VERSION_LOW: CoreVersionLow,
+    CommonRegisters.FIRMWARE_VERSION_HIGH: FirmwareVersionHigh,
+    CommonRegisters.FIRMWARE_VERSION_LOW: FirmwareVersionLow,
+    CommonRegisters.TIMESTAMP_SECONDS: TimestampSeconds,
+    CommonRegisters.TIMESTAMP_MICROSECONDS: TimestampMicroseconds,
+    CommonRegisters.OPERATION_CONTROL: OperationControl,
+    CommonRegisters.RESET_DEVICE: ResetDevice,
+    CommonRegisters.DEVICE_NAME: DeviceName,
+    CommonRegisters.SERIAL_NUMBER: SerialNumber,
+    CommonRegisters.CLOCK_CONFIGURATION: ClockConfiguration,
+    CommonRegisters.TIMESTAMP_OFFSET: TimestampOffset,
 }
 
 
