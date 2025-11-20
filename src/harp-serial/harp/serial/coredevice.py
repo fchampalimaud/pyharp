@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum, IntEnum, IntFlag
 from io import BufferedWriter
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Callable, ClassVar, Generic, Literal, Optional, TypeVar
 
 import serial
 from harp.protocol import (
@@ -14,9 +14,32 @@ from harp.protocol import (
     OperationCtrl,
     PayloadType,
 )
-from harp.protocol.exceptions import HarpTimeoutException
+from harp.protocol.exceptions import (
+    HarpReadException,
+    HarpTimeoutException,
+    HarpWriteException,
+)
 from harp.protocol.messages import HarpMessage
 from harp.serial.harp_serial import HarpSerial
+
+T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class Spec(Generic[T]):
+    addr: int
+    payload_type: PayloadType
+    decode: Callable[[Any], T]  # from payload (int|float|list) -> T
+    encode: Callable[[T], Any]  # from T -> payload (int|float|list)
+
+
+# Basic adapters
+def _id(x):
+    return x
+
+
+def _enum(enum_cls):
+    return lambda v: enum_cls(v), lambda v: int(v)
 
 
 class TimeoutStrategy(Enum):
@@ -551,6 +574,118 @@ COMMON_REGISTERS = {
 }
 
 
+COMMON_SPECS = {
+    CommonRegisters.WHO_AM_I: Spec(
+        addr=0,
+        payload_type=PayloadType.U16,
+        decode=int,
+        encode=_id,
+    ),
+    CommonRegisters.HARDWARE_VERSION_HIGH: Spec(
+        addr=1,
+        payload_type=PayloadType.U8,
+        decode=int,
+        encode=_id,
+    ),
+    CommonRegisters.HARDWARE_VERSION_LOW: Spec(
+        addr=2,
+        payload_type=PayloadType.U8,
+        decode=int,
+        encode=_id,
+    ),
+    CommonRegisters.ASSEMBLY_VERSION: Spec(
+        addr=3,
+        payload_type=PayloadType.U8,
+        decode=int,
+        encode=_id,
+    ),
+    CommonRegisters.CORE_VERSION_HIGH: Spec(
+        addr=4,
+        payload_type=PayloadType.U8,
+        decode=int,
+        encode=_id,
+    ),
+    CommonRegisters.CORE_VERSION_LOW: Spec(
+        addr=5,
+        payload_type=PayloadType.U8,
+        decode=int,
+        encode=_id,
+    ),
+    CommonRegisters.FIRMWARE_VERSION_HIGH: Spec(
+        addr=6,
+        payload_type=PayloadType.U8,
+        decode=int,
+        encode=_id,
+    ),
+    CommonRegisters.FIRMWARE_VERSION_LOW: Spec(
+        addr=7,
+        payload_type=PayloadType.U8,
+        decode=int,
+        encode=_id,
+    ),
+    CommonRegisters.TIMESTAMP_SECONDS: Spec(
+        addr=8,
+        payload_type=PayloadType.U32,
+        decode=int,
+        encode=_id,
+    ),
+    CommonRegisters.TIMESTAMP_MICROSECONDS: Spec(
+        addr=9,
+        payload_type=PayloadType.U16,
+        decode=int,
+        encode=_id,
+    ),
+    CommonRegisters.OPERATION_CONTROL: Spec(
+        addr=10,
+        payload_type=PayloadType.U8,
+        decode=lambda payload: OperationControlPayload(
+            OperationMode=OperationMode(payload & 0x3),
+            DumpRegisters=bool((payload & 0x8) != 0),
+            MuteReplies=bool((payload & 0x10) != 0),
+            VisualIndicators=LedState((payload & 0x20) != 0),
+            OperationLed=LedState((payload & 0x40) != 0),
+            Heartbeat=(payload & 0x80) != 0,
+        ),
+        encode=lambda value: (int(value.OperationMode) & 0x3)
+        | (0x8 if bool(value.DumpRegisters) else 0)
+        | (0x10 if bool(value.MuteReplies) else 0)
+        | (0x20 if bool(value.VisualIndicators) else 0)
+        | (0x40 if bool(value.OperationLed) else 0)
+        | (0x80 if bool(value.Heartbeat) else 0),
+    ),
+    CommonRegisters.RESET_DEVICE: Spec(
+        addr=11,
+        payload_type=PayloadType.U8,
+        decode=lambda payload: ResetFlags(payload),
+        encode=lambda value: int(value),
+    ),
+    CommonRegisters.DEVICE_NAME: Spec(
+        addr=12,
+        payload_type=PayloadType.U8,
+        decode=_id,
+        encode=_id,
+    ),
+    CommonRegisters.SERIAL_NUMBER: Spec(
+        addr=13,
+        payload_type=PayloadType.U16,
+        decode=int,
+        encode=_id,
+    ),
+    CommonRegisters.CLOCK_CONFIGURATION: Spec(
+        addr=14,
+        payload_type=PayloadType.U8,
+        decode=lambda payload: ClockConfigurationFlags(payload),
+        encode=lambda value: int(value),
+    ),
+    CommonRegisters.TIMESTAMP_OFFSET: Spec(
+        addr=15,
+        payload_type=PayloadType.U8,
+        decode=int,
+        encode=_id,
+    ),
+}
+
+
 class Device:
     """
     The `Device` class provides the interface for interacting with Harp devices. This implementation of the Harp device was based on the official documentation available on the [harp-tech website](https://harp-tech.org/protocol/Device.html).
@@ -558,42 +693,55 @@ class Device:
     Attributes
     ----------
     WHO_AM_I : int
-        The device ID number. A list of devices can be found [here](https://github.com/harp-tech/protocol/blob/main/whoami.md)
-    HW_VERSION_H : int
-        The major hardware version
-    HW_VERSION_L : int
-        The minor hardware version
+        Specifies the identity class of the device.
+    HARDWARE_VERSION_HIGH : int
+        Specifies the major hardware version of the device.
+    HARDWARE_VERSION_LOW : int
+        Specifies the minor hardware version of the device.
     ASSEMBLY_VERSION : int
-        The version of the assembled components
-    HARP_VERSION_H : int
-        The major Harp core version
-    HARP_VERSION_L : int
-        The minor Harp core version
-    FIRMWARE_VERSION_H : int
-        The major firmware version
-    FIRMWARE_VERSION_L : int
-        The minor firmware version
-    DEVICE_NAME : str
-        The device name stored in the Harp device
-    SERIAL_NUMBER : int, optional
-        The serial number of the device
+        Specifies the version of the assembled components in the device.
+    CORE_VERSION_HIGH : int
+        Specifies the major version of the Harp core implemented by the device.
+    CORE_VERSION_LOW : int
+        Specifies the minor version of the Harp core implemented by the device.
+    FIRMWARE_VERSION_HIGH : int
+        Specifies the major version of the Harp core implemented by the device.
+    FIRMWARE_VERSION_LOW : int
+        Specifies the minor version of the Harp core implemented by the device.
+    OPERATION_CONTROL : OperationControlPayload
+        Stores the configuration mode of the device.
+    RESET_DEVICE : ResetFlags
+        Resets the device and saves non-volatile registers.
+    DEVICE_NAME : bytes
+        Stores the user-specified device name.
+    SERIAL_NUMBER : int
+        Specifies the unique serial number of the device.
+    CLOCK_CONFIGURATION : ClockConfigurationFlags
+        Specifies the configuration for the device synchronization clock.
+    TIMESTAMP_OFFSET : int
+        Specifies an offset value to be added to the device's timestamp if above zero. The register is sensitive to 500 microsecond increments. This register is non-volatile.
     """
 
-    WHO_AM_I: int
-    HW_VERSION_H: int
-    HW_VERSION_L: int
-    ASSEMBLY_VERSION: int
-    CORE_VERSION_H: int
-    CORE_VERSION_L: int
-    FIRMWARE_VERSION_H: int
-    FIRMWARE_VERSION_L: int
-    DEVICE_NAME: str
-    SERIAL_NUMBER: int
-    CLOCK_CONFIG: int
-    TIMESTAMP_OFFSET: int
+    COMMON_SPECS: ClassVar[dict[Any, Spec]] = COMMON_SPECS
+    DEVICE_SPECS: ClassVar[dict[Any, Spec]] = {}
 
-    COMMON_REGISTERS_TYPE = COMMON_REGISTERS
-    DEVICE_REGISTERS_TYPE = {}
+    COMMON_REGISTERS_TYPE: ClassVar[dict[Any, type[HarpMessage]]] = COMMON_REGISTERS
+    DEVICE_REGISTERS_TYPE: ClassVar[dict[Any, type[HarpMessage]]] = {}
+
+    WHO_AM_I: int
+    HARDWARE_VERSION_HIGH: int
+    HARDWARE_VERSION_LOW: int
+    ASSEMBLY_VERSION: int
+    CORE_VERSION_HIGH: int
+    CORE_VERSION_LOW: int
+    FIRMWARE_VERSION_HIGH: int
+    FIRMWARE_VERSION_LOW: int
+    OPERATION_CONTROL: OperationControlPayload
+    RESET_DEVICE: ResetFlags
+    DEVICE_NAME: bytes
+    SERIAL_NUMBER: int
+    CLOCK_CONFIGURATION: ClockConfigurationFlags
+    TIMESTAMP_OFFSET: int
 
     _ser: HarpSerial
     _dump_file_path: Optional[Path]
@@ -636,16 +784,18 @@ class Device:
         Loads the data stored in the device's common registers.
         """
         self.WHO_AM_I = self.read_who_am_i()
-        self.HW_VERSION_H = self.read_hardware_version_high()
-        self.HW_VERSION_L = self.read_hardware_version_low()
+        self.HARDWARE_VERSION_HIGH = self.read_hardware_version_high()
+        self.HARDWARE_VERSION_LOW = self.read_hardware_version_low()
         self.ASSEMBLY_VERSION = self.read_assembly_version()
-        self.CORE_VERSION_H = self.read_core_version_high()
-        self.CORE_VERSION_L = self.read_core_version_low()
-        self.FIRMWARE_VERSION_H = self.read_firmware_version_high()
-        self.FIRMWARE_VERSION_L = self.read_firmware_version_low()
+        self.CORE_VERSION_HIGH = self.read_core_version_high()
+        self.CORE_VERSION_LOW = self.read_core_version_low()
+        self.FIRMWARE_VERSION_HIGH = self.read_firmware_version_high()
+        self.FIRMWARE_VERSION_LOW = self.read_firmware_version_low()
+        self.OPERATION_CONTROL = self.read_operation_control()
+        self.RESET_DEVICE = self.read_reset_device()
         self.DEVICE_NAME = self.read_device_name()
         self.SERIAL_NUMBER = self.read_serial_number()
-        self.CLOCK_CONFIG = self.read_clock_configuration()
+        self.CLOCK_CONFIGURATION = self.read_clock_configuration()
         self.TIMESTAMP_OFFSET = self.read_timestamp_offset()
 
     def info(self) -> None:
@@ -653,15 +803,20 @@ class Device:
         Prints the device information.
         """
         print("Device info:")
-        print(f"* Who am I: ({self.WHO_AM_I})")
-        print(f"* HW version: {self.HW_VERSION_H}.{self.HW_VERSION_L}")
-        print(f"* Assembly version: {self.ASSEMBLY_VERSION}")
-        print(f"* HARP version: {self.CORE_VERSION_H}.{self.CORE_VERSION_L}")
-        print(
-            f"* Firmware version: {self.FIRMWARE_VERSION_H}.{self.FIRMWARE_VERSION_L}"
-        )
-        print(f"* Device name: {self.DEVICE_NAME}")
-        print(f"* Serial number: {self.SERIAL_NUMBER}")
+        print(f"Who Am I: {self.WHO_AM_I}")
+        print(f"Hardware Version High: {self.HARDWARE_VERSION_HIGH}")
+        print(f"Hardware Version Low: {self.HARDWARE_VERSION_LOW}")
+        print(f"Assembly Version: {self.ASSEMBLY_VERSION}")
+        print(f"Core Version High: {self.CORE_VERSION_HIGH}")
+        print(f"Core Version Low: {self.CORE_VERSION_LOW}")
+        print(f"Firmware Version High: {self.FIRMWARE_VERSION_HIGH}")
+        print(f"Firmware Version Low: {self.FIRMWARE_VERSION_LOW}")
+        print(f"Operation Control: {self.OPERATION_CONTROL}")
+        print(f"Reset Device: {self.RESET_DEVICE}")
+        print(f"Device Name: {self.DEVICE_NAME}")
+        print(f"Serial Number: {self.SERIAL_NUMBER}")
+        print(f"Clock Configuration: {self.CLOCK_CONFIGURATION}")
+        print(f"Timestamp Offset: {self.TIMESTAMP_OFFSET}")
         # print(f"* Mode: {self._read_device_mode().name}")
 
     def connect(self) -> None:
@@ -693,6 +848,38 @@ class Device:
 
         self._ser.close()
 
+    def _join_specs(self) -> dict[int, Spec]:
+        return self.COMMON_SPECS | self.DEVICE_SPECS
+
+    def _send_checked(self, msg: HarpMessage) -> Optional[HarpMessage]:
+        reply = self.send(msg)
+        if reply is not None and reply.is_error:
+            # Route read vs write exception appropriately
+            if msg.message_type == MessageType.READ:
+                raise HarpReadException(f"{msg.address}", reply)
+            else:
+                raise HarpWriteException(f"{msg.address}", reply)
+        return reply
+
+    def read_reg(self, reg: CommonRegisters):
+        spec = self._join_specs()[reg]
+        reply = self._send_checked(
+            HarpMessage(MessageType.READ, spec.addr, spec.payload_type)
+        )
+        if reply is None:
+            return None
+        return spec.decode(reply.payload)
+
+    def write_reg(self, reg: CommonRegisters, value):
+        spec = self._join_specs()[reg]
+        payload = spec.encode(value)
+        reply = self._send_checked(
+            HarpMessage(
+                MessageType.WRITE, spec.addr, spec.payload_type, payload=payload
+            )
+        )
+        return spec.decode(reply.payload) if reply is not None else None
+
     def dump_registers(self) -> list:
         """
         Asserts the DUMP bit to dump the values of all core and app registers
@@ -703,7 +890,7 @@ class Device:
         list
             The list containing the reply Harp messages for all the device's registers
         """
-        address = CommonRegisters.OPERATION_CTRL
+        address = CommonRegisters.OPERATION_CONTROL
         reg_value = self.send(HarpMessage(MessageType.READ, address, PayloadType.U8))
 
         if reg_value is None:
@@ -742,10 +929,21 @@ class Device:
 
         return WhoAmI(
             reply.payload,
-            reply.payload_type,
+            payload_type=reply.payload_type,
             timestamp=reply.timestamp,
             port=reply.port,
         )
+
+    def read2_who_am_i(self) -> int:
+        """
+        Reads the WhoAmI register.
+
+        Returns
+        -------
+        int
+            The value stored in the WhoAmI register
+        """
+        return self.read_reg(CommonRegisters.WHO_AM_I)
 
     def read_hardware_version_high(self) -> HardwareVersionHigh:
         """
@@ -763,10 +961,21 @@ class Device:
 
         return HardwareVersionHigh(
             reply.payload,
-            reply.payload_type,
+            payload_type=reply.payload_type,
             timestamp=reply.timestamp,
             port=reply.port,
         )
+
+    def read2_hardware_version_high(self) -> int:
+        """
+        Reads the HardwareVersionHigh register.
+
+        Returns
+        -------
+        int
+            The value stored in the HardwareVersionHigh register
+        """
+        return self.read_reg(CommonRegisters.HARDWARE_VERSION_HIGH)
 
     def read_hardware_version_low(self) -> HardwareVersionLow:
         """
@@ -784,10 +993,21 @@ class Device:
 
         return HardwareVersionLow(
             reply.payload,
-            reply.payload_type,
+            payload_type=reply.payload_type,
             timestamp=reply.timestamp,
             port=reply.port,
         )
+
+    def read2_hardware_version_low(self) -> int:
+        """
+        Reads the HardwareVersionLow register.
+
+        Returns
+        -------
+        int
+            The value stored in the HardwareVersionLow register
+        """
+        return self.read_reg(CommonRegisters.HARDWARE_VERSION_LOW)
 
     def read_assembly_version(self) -> AssemblyVersion:
         """
@@ -805,10 +1025,21 @@ class Device:
 
         return AssemblyVersion(
             reply.payload,
-            reply.payload_type,
+            payload_type=reply.payload_type,
             timestamp=reply.timestamp,
             port=reply.port,
         )
+
+    def read2_assembly_version(self) -> int:
+        """
+        Reads the AssemblyVersion register.
+
+        Returns
+        -------
+        int
+            The value stored in the AssemblyVersion register
+        """
+        return self.read_reg(CommonRegisters.ASSEMBLY_VERSION)
 
     def read_core_version_high(self) -> CoreVersionHigh:
         """
@@ -826,10 +1057,21 @@ class Device:
 
         return CoreVersionHigh(
             reply.payload,
-            reply.payload_type,
+            payload_type=reply.payload_type,
             timestamp=reply.timestamp,
             port=reply.port,
         )
+
+    def read2_core_version_high(self) -> int:
+        """
+        Reads the CoreVersionHigh register.
+
+        Returns
+        -------
+        int
+            The value stored in the CoreVersionHigh register
+        """
+        return self.read_reg(CommonRegisters.CORE_VERSION_HIGH)
 
     def read_core_version_low(self) -> CoreVersionLow:
         """
@@ -847,10 +1089,21 @@ class Device:
 
         return CoreVersionLow(
             reply.payload,
-            reply.payload_type,
+            payload_type=reply.payload_type,
             timestamp=reply.timestamp,
             port=reply.port,
         )
+
+    def read2_core_version_low(self) -> int:
+        """
+        Reads the CoreVersionLow register.
+
+        Returns
+        -------
+        int
+            The value stored in the CoreVersionLow register
+        """
+        return self.read_reg(CommonRegisters.CORE_VERSION_LOW)
 
     def read_firmware_version_high(self) -> FirmwareVersionHigh:
         """
@@ -868,10 +1121,21 @@ class Device:
 
         return FirmwareVersionHigh(
             reply.payload,
-            reply.payload_type,
+            payload_type=reply.payload_type,
             timestamp=reply.timestamp,
             port=reply.port,
         )
+
+    def read2_firmware_version_high(self) -> int:
+        """
+        Reads the FirmwareVersionHigh register.
+
+        Returns
+        -------
+        int
+            The value stored in the FirmwareVersionHigh register
+        """
+        return self.read_reg(CommonRegisters.FIRMWARE_VERSION_HIGH)
 
     def read_firmware_version_low(self) -> FirmwareVersionLow:
         """
@@ -889,10 +1153,21 @@ class Device:
 
         return FirmwareVersionLow(
             reply.payload,
-            reply.payload_type,
+            payload_type=reply.payload_type,
             timestamp=reply.timestamp,
             port=reply.port,
         )
+
+    def read2_firmware_version_low(self) -> int:
+        """
+        Reads the FirmwareVersionLow register.
+
+        Returns
+        -------
+        int
+            The value stored in the FirmwareVersionLow register
+        """
+        return self.read_reg(CommonRegisters.FIRMWARE_VERSION_LOW)
 
     def read_timestamp_seconds(self) -> TimestampSeconds:
         """
@@ -910,10 +1185,21 @@ class Device:
 
         return TimestampSeconds(
             reply.payload,
-            reply.payload_type,
+            payload_type=reply.payload_type,
             timestamp=reply.timestamp,
             port=reply.port,
         )
+
+    def read2_timestamp_seconds(self) -> int:
+        """
+        Reads the TimestampSeconds register.
+
+        Returns
+        -------
+        int
+            The value stored in the TimestampSeconds register
+        """
+        return self.read_reg(CommonRegisters.TIMESTAMP_SECONDS)
 
     def write_timestamp_seconds(self, value: int) -> TimestampSeconds:
         """
@@ -939,6 +1225,17 @@ class Device:
             )
         return None
 
+    def write2_timestamp_seconds(self, value: int) -> int:
+        """
+        Writes a value to the TimestampSeconds register.
+
+        Parameters
+        ----------
+        value : int
+            The value to be written to the TimestampSeconds register
+        """
+        return self.write_reg(CommonRegisters.TIMESTAMP_SECONDS, value)
+
     def read_timestamp_microseconds(self) -> TimestampMicroseconds:
         """
         Reads the TimestampMicroseconds register.
@@ -955,10 +1252,21 @@ class Device:
 
         return TimestampMicroseconds(
             reply.payload,
-            reply.payload_type,
+            payload_type=reply.payload_type,
             timestamp=reply.timestamp,
             port=reply.port,
         )
+
+    def read2_timestamp_microseconds(self) -> int:
+        """
+        Reads the TimestampMicroseconds register.
+
+        Returns
+        -------
+        int
+            The value stored in the TimestampMicroseconds register
+        """
+        return self.read_reg(CommonRegisters.TIMESTAMP_MICROSECONDS)
 
     def read_operation_control(self) -> OperationControl:
         """
@@ -976,10 +1284,21 @@ class Device:
 
         return OperationControl(
             reply.payload,
-            reply.payload_type,
+            payload_type=reply.payload_type,
             timestamp=reply.timestamp,
             port=reply.port,
         )
+
+    def read2_operation_control(self) -> OperationControlPayload:
+        """
+        Reads the OperationControl register.
+
+        Returns
+        -------
+        OperationControlPayload
+            The value stored in the OperationControl register
+        """
+        return self.read_reg(CommonRegisters.OPERATION_CONTROL)
 
     def write_operation_control(
         self, value: OperationControlPayload
@@ -1007,6 +1326,19 @@ class Device:
             )
         return None
 
+    def write2_operation_control(
+        self, value: OperationControlPayload
+    ) -> OperationControlPayload:
+        """
+        Writes a value to the OperationControl register.
+
+        Parameters
+        ----------
+        value : OperationControlPayload
+            The value to be written to the OperationControl register
+        """
+        return self.write_reg(CommonRegisters.OPERATION_CONTROL, value)
+
     def read_reset_device(self) -> ResetDevice:
         """
         Reads the ResetDevice register.
@@ -1023,10 +1355,21 @@ class Device:
 
         return ResetDevice(
             reply.payload,
-            reply.payload_type,
+            payload_type=reply.payload_type,
             timestamp=reply.timestamp,
             port=reply.port,
         )
+
+    def read2_reset_device(self) -> ResetFlags:
+        """
+        Reads the ResetDevice register.
+
+        Returns
+        -------
+        ResetFlags
+            The value stored in the ResetDevice register
+        """
+        return self.read_reg(CommonRegisters.RESET_DEVICE)
 
     def write_reset_device(self, value: ResetFlags) -> ResetDevice:
         """
@@ -1052,6 +1395,17 @@ class Device:
             )
         return None
 
+    def write2_reset_device(self, value: ResetFlags) -> ResetFlags:
+        """
+        Writes a value to the ResetDevice register.
+
+        Parameters
+        ----------
+        value : ResetFlags
+            The value to be written to the ResetDevice register
+        """
+        return self.write_reg(CommonRegisters.RESET_DEVICE, value)
+
     def read_device_name(self) -> DeviceName:
         """
         Reads the DeviceName register.
@@ -1068,10 +1422,21 @@ class Device:
 
         return DeviceName(
             reply.payload,
-            reply.payload_type,
+            payload_type=reply.payload_type,
             timestamp=reply.timestamp,
             port=reply.port,
         )
+
+    def read2_device_name(self) -> bytes:
+        """
+        Reads the DeviceName register.
+
+        Returns
+        -------
+        bytes
+            The value stored in the DeviceName register
+        """
+        return self.read_reg(CommonRegisters.DEVICE_NAME)
 
     def write_device_name(self, value: bytes) -> DeviceName:
         """
@@ -1097,6 +1462,17 @@ class Device:
             )
         return None
 
+    def write2_device_name(self, value: bytes) -> bytes:
+        """
+        Writes a value to the DeviceName register.
+
+        Parameters
+        ----------
+        value : bytes
+            The value to be written to the DeviceName register
+        """
+        return self.write_reg(CommonRegisters.DEVICE_NAME, value)
+
     def read_serial_number(self) -> SerialNumber:
         """
         Reads the SerialNumber register.
@@ -1113,10 +1489,21 @@ class Device:
 
         return SerialNumber(
             reply.payload,
-            reply.payload_type,
+            payload_type=reply.payload_type,
             timestamp=reply.timestamp,
             port=reply.port,
         )
+
+    def read2_serial_number(self) -> int:
+        """
+        Reads the SerialNumber register.
+
+        Returns
+        -------
+        int
+            The value stored in the SerialNumber register
+        """
+        return self.read_reg(CommonRegisters.SERIAL_NUMBER)
 
     def write_serial_number(self, value: int) -> SerialNumber:
         """
@@ -1142,6 +1529,17 @@ class Device:
             )
         return None
 
+    def write2_serial_number(self, value: int) -> int:
+        """
+        Writes a value to the SerialNumber register.
+
+        Parameters
+        ----------
+        value : int
+            The value to be written to the SerialNumber register
+        """
+        return self.write_reg(CommonRegisters.SERIAL_NUMBER, value)
+
     def read_clock_configuration(self) -> ClockConfiguration:
         """
         Reads the ClockConfiguration register.
@@ -1158,10 +1556,21 @@ class Device:
 
         return ClockConfiguration(
             reply.payload,
-            reply.payload_type,
+            payload_type=reply.payload_type,
             timestamp=reply.timestamp,
             port=reply.port,
         )
+
+    def read2_clock_configuration(self) -> ClockConfigurationFlags:
+        """
+        Reads the ClockConfiguration register.
+
+        Returns
+        -------
+        ClockConfigurationFlags
+            The value stored in the ClockConfiguration register
+        """
+        return self.read_reg(CommonRegisters.CLOCK_CONFIGURATION)
 
     def write_clock_configuration(
         self, value: ClockConfigurationFlags
@@ -1189,6 +1598,19 @@ class Device:
             )
         return None
 
+    def write2_clock_configuration(
+        self, value: ClockConfigurationFlags
+    ) -> ClockConfigurationFlags:
+        """
+        Writes a value to the ClockConfiguration register.
+
+        Parameters
+        ----------
+        value : ClockConfigurationFlags
+            The value to be written to the ClockConfiguration register
+        """
+        return self.write_reg(CommonRegisters.CLOCK_CONFIGURATION, value)
+
     def read_timestamp_offset(self) -> TimestampOffset:
         """
         Reads the TimestampOffset register.
@@ -1205,10 +1627,21 @@ class Device:
 
         return TimestampOffset(
             reply.payload,
-            reply.payload_type,
+            payload_type=reply.payload_type,
             timestamp=reply.timestamp,
             port=reply.port,
         )
+
+    def read2_timestamp_offset(self) -> int:
+        """
+        Reads the TimestampOffset register.
+
+        Returns
+        -------
+        int
+            The value stored in the TimestampOffset register
+        """
+        return self.read_reg(CommonRegisters.TIMESTAMP_OFFSET)
 
     def write_timestamp_offset(self, value: int) -> TimestampOffset:
         """
@@ -1233,6 +1666,17 @@ class Device:
                 port=reply.port,
             )
         return None
+
+    def write2_timestamp_offset(self, value: int) -> int:
+        """
+        Writes a value to the TimestampOffset register.
+
+        Parameters
+        ----------
+        value : int
+            The value to be written to the TimestampOffset register
+        """
+        return self.write_reg(CommonRegisters.TIMESTAMP_OFFSET, value)
 
     def send(
         self,
